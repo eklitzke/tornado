@@ -76,9 +76,10 @@ class WebSocketHandler(tornado.web.RequestHandler):
         self.stream = request.connection.stream
 
     def _execute(self, transforms, *args, **kwargs):
-        if self.request.headers.get("Upgrade") != "WebSocket" or \
-           self.request.headers.get("Connection") != "Upgrade" or \
-           not self.request.headers.get("Origin"):
+        headers = dict((k.lower(), v) for k, v in self.request.headers.iteritems())
+        if headers.get("upgrade") != "WebSocket" or \
+           headers.get("connection") != "Upgrade" or \
+           not headers.get("origin"):
             message = "Expected WebSocket headers"
             self.stream.write(
                 "HTTP/1.1 403 Forbidden\r\nContent-Length: " +
@@ -94,8 +95,8 @@ class WebSocketHandler(tornado.web.RequestHandler):
         # the first 8 bytes of the request body. The code below is a bot
         # convoluted, but it handles both kinds of handshakes.
 
-        key1 = _bytes(self.request.headers.get("Sec-WebSocket-Key1"))
-        key2 = _bytes(self.request.headers.get("Sec-WebSocket-Key2"))
+        key1 = _bytes(headers.get("sec-websocket-key1"))
+        key2 = _bytes(headers.get("sec-websocket-key2"))
 
         def key_value(key):
             val = int(''.join(c for c in key if c in string.digits), 10)
@@ -135,12 +136,12 @@ class WebSocketHandler(tornado.web.RequestHandler):
                 "Server: TornadoServer/0.1\r\n")
             if response_body:
                 response += (
-                    "Sec-WebSocket-Origin: " + self.request.headers["Origin"] + "\r\n"
+                    "Sec-WebSocket-Origin: " + headers["origin"] + "\r\n"
                     "Sec-WebSocket-Location: ws://" + self.request.host +
                     self.request.path + "\r\n\r\n" + response_body)
             else:
                 response += (
-                    "WebSocket-Origin: " + self.request.headers["Origin"] + "\r\n"
+                    "WebSocket-Origin: " + headers["origin"] + "\r\n"
                     "WebSocket-Location: ws://" + self.request.host +
                     self.request.path + "\r\n\r\n")
             self.stream.write(response)
