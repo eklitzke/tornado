@@ -109,7 +109,7 @@ class WebSocketHandler(tornado.web.RequestHandler):
             s1 = key_value(key1)
             s2 = key_value(key2)
         except (ValueError, ZeroDivisionError), e:
-            respond_handshake(None)
+            return respond_handshake(None)
 
         def compute_secret(body):
             secret = hashlib.md5(s1 + s2 + _bytes(body)).digest()
