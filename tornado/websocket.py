@@ -14,10 +14,22 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+import string
+import struct
+import hashlib
 import functools
 import logging
 import tornado.escape
 import tornado.web
+
+# The WebSockets protocol includes binary data, so we need to be sure that data
+# read is interpreted as a raw bytestream, not unicode. This tests to see if
+# this version of Python knows about the 'bytes' builtin, and falls back to
+# 'str' otherwise.
+try:
+    _bytes = __builtins__.bytes
+except AttributeError:
+    _bytes = str
 
 class WebSocketHandler(tornado.web.RequestHandler):
     """A request handler for HTML 5 Web Sockets.
@@ -71,16 +83,70 @@ class WebSocketHandler(tornado.web.RequestHandler):
             self.stream.write(
                 "HTTP/1.1 403 Forbidden\r\nContent-Length: " +
                 str(len(message)) + "\r\n\r\n" + message)
+
             return
-        self.stream.write(
-            "HTTP/1.1 101 Web Socket Protocol Handshake\r\n"
-            "Upgrade: WebSocket\r\n"
-            "Connection: Upgrade\r\n"
-            "Server: TornadoServer/0.1\r\n"
-            "WebSocket-Origin: " + self.request.headers["Origin"] + "\r\n"
-            "WebSocket-Location: ws://" + self.request.host +
-            self.request.path + "\r\n\r\n")
-        self.async_callback(self.open)(*args, **kwargs)
+
+        # Note: there are basically two kinds of handshakes that can happen. In
+        # WebSocket draft specifications before draft 76 (June 2010) things are
+        # simple, the server just needs to respond with some upgrade headers and
+        # a WebSocket-{Origin,Location}. Starting with draft 76, clients send
+        # two additional headers, Sec-WebSocket-Key{1,2} and a secret value in
+        # the first 8 bytes of the request body. The code below is a bot
+        # convoluted, but it handles both kinds of handshakes.
+
+        key1 = _bytes(self.request.headers.get("Sec-WebSocket-Key1"))
+        key2 = _bytes(self.request.headers.get("Sec-WebSocket-Key2"))
+
+        def key_value(key):
+            val = int(''.join(c for c in key if c in string.digits), 10)
+            divisor = sum(1 for c in key if c == ' ')
+            return struct.pack('!L', val / divisor)
+
+        if not (key1 and key2):
+            respond_handshake('')
+
+        try:
+            s1 = key_value(key1)
+            s2 = key_value(key2)
+        except (ValueError, ZeroDivisionError), e:
+            respond_handshake(None)
+
+        def compute_secret(body):
+            secret = hashlib.md5(s1 + s2 + _bytes(body)).digest()
+            respond_handshake(secret)
+
+        def respond_handshake(response_body):
+            # If response_body is None, then there was a handshake
+            # error. Otherwise, response_body is an empty string for an
+            # old-style handshake, and it's a 16 byte computed secret for a new
+            # style handshake.
+            if response_body is None:
+                # there was a handshake error
+                message = "WebSocket handshake failed"
+                self.stream.write(
+                    "HTTP/1.1 403 Forbidden\r\nContent-Length: " +
+                    str(len(message)) + "\r\n\r\n" + message)
+                return
+
+            response = (
+                "HTTP/1.1 101 Web Socket Protocol Handshake\r\n"
+                "Upgrade: WebSocket\r\n"
+                "Connection: Upgrade\r\n"
+                "Server: TornadoServer/0.1\r\n")
+            if response_body:
+                response += (
+                    "Sec-WebSocket-Origin: " + self.request.headers["Origin"] + "\r\n"
+                    "Sec-WebSocket-Location: ws://" + self.request.host +
+                    self.request.path + "\r\n\r\n" + response_body)
+            else:
+                response += (
+                    "WebSocket-Origin: " + self.request.headers["Origin"] + "\r\n"
+                    "WebSocket-Location: ws://" + self.request.host +
+                    self.request.path + "\r\n\r\n")
+            self.stream.write(response)
+            self.async_callback(self.open)(*args, **kwargs)
+
+        self.stream.read_bytes(8, compute_secret)
 
     def write_message(self, message):
         """Sends the given message to the client of this Web Socket."""
