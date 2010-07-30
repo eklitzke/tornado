@@ -103,19 +103,6 @@ class WebSocketHandler(tornado.web.RequestHandler):
             divisor = sum(1 for c in key if c == ' ')
             return struct.pack('!L', val / divisor)
 
-        if not (key1 and key2):
-            respond_handshake('')
-
-        try:
-            s1 = key_value(key1)
-            s2 = key_value(key2)
-        except (ValueError, ZeroDivisionError), e:
-            return respond_handshake(None)
-
-        def compute_secret(body):
-            secret = hashlib.md5(s1 + s2 + _bytes(body)).digest()
-            respond_handshake(secret)
-
         def respond_handshake(response_body):
             # If response_body is None, then there was a handshake
             # error. Otherwise, response_body is an empty string for an
@@ -146,6 +133,20 @@ class WebSocketHandler(tornado.web.RequestHandler):
                     self.request.path + "\r\n\r\n")
             self.stream.write(response)
             self.async_callback(self.open)(*args, **kwargs)
+
+
+        if not (key1 and key2):
+            respond_handshake('')
+
+        try:
+            s1 = key_value(key1)
+            s2 = key_value(key2)
+        except (ValueError, ZeroDivisionError), e:
+            return respond_handshake(None)
+
+        def compute_secret(body):
+            secret = hashlib.md5(s1 + s2 + _bytes(body)).digest()
+            respond_handshake(secret)
 
         self.stream.read_bytes(8, compute_secret)
 
