@@ -116,6 +116,7 @@ class IOLoop(object):
         self._timeouts = []
         self._running = False
         self._stopped = False
+        self._waiting = False
         self._blocking_signal_threshold = None
 
         # Create a pipe that we send bogus data to when we want to wake
@@ -160,7 +161,7 @@ class IOLoop(object):
 
     def close(self, all_fds=False):
         """Closes the IOLoop, freeing any resources used.
-        
+
         If ``all_fds`` is true, all file descriptors registered on the
         IOLoop will be closed (not just the ones created by the IOLoop itself.
         """
@@ -280,6 +281,7 @@ class IOLoop(object):
                 signal.setitimer(signal.ITIMER_REAL, 0, 0)
 
             try:
+                self._waiting = True
                 event_pairs = self._impl.poll(poll_timeout)
             except Exception, e:
                 # Depending on python version and IOLoop implementation,
@@ -293,6 +295,8 @@ class IOLoop(object):
                     continue
                 else:
                     raise
+            finally:
+                self._waiting = False
 
             if self._blocking_signal_threshold is not None:
                 signal.setitimer(signal.ITIMER_REAL,
@@ -360,13 +364,13 @@ class IOLoop(object):
         The argument is a handle as returned by add_timeout.
         """
         # Removing from a heap is complicated, so just leave the defunct
-        # timeout object in the queue (see discussion in 
+        # timeout object in the queue (see discussion in
         # http://docs.python.org/library/heapq.html).
         # If this turns out to be a problem, we could add a garbage
         # collection pass whenever there are too many dead timeouts.
         timeout.callback = None
 
-    def add_callback(self, callback):
+    def add_callback(self, callback, force_wake=False):
         """Calls the given callback on the next I/O loop iteration.
 
         It is safe to call this method from any thread at any time.
@@ -375,7 +379,7 @@ class IOLoop(object):
         from that IOLoop's thread.  add_callback() may be used to transfer
         control from other threads to the IOLoop's thread.
         """
-        if not self._callbacks:
+        if self._waiting or force_wake:
             self._wake()
         self._callbacks.append(stack_context.wrap(callback))
 
@@ -433,7 +437,7 @@ class _Timeout(object):
     # Comparison methods to sort by deadline, with object id as a tiebreaker
     # to guarantee a consistent ordering.  The heapq module uses __le__
     # in python2.5, and __lt__ in 2.6+ (sort() and most other comparisons
-    # use __lt__).  
+    # use __lt__).
     def __lt__(self, other):
         return ((self.deadline, id(self)) <
                 (other.deadline, id(other)))
